@@ -1,0 +1,12 @@
+[Unit]
+Description=Celery worker
+After=network.target
+
+[Service]
+User={{ ansible_user }}
+Group={{ ansible_user }}
+WorkingDirectory={{ project_path }}
+ExecStart={{ virtualenv_path }}/bin/celery -A snpProject worker -l info
+
+[Install]
+WantedBy=multi-user.target

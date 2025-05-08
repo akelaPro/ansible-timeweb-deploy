@@ -1,0 +1,223 @@
+---
+- hosts: timeweb
+  become: true
+  vars_files:
+    - secrets.yml  # Подключаем зашифрованный файл с секретами
+
+  vars:
+    project_name: snpProject
+    project_path: /root/{{ project_name }}
+    virtualenv_path: /root/{{ project_name }}/.venv
+    git_repo: https://github.com/akelaPro/SnP_Project.git
+    git_branch: main
+    domain_name: galery.site
+    postgresql_version: "14"
+    
+    # Database variables
+    db_user: "postgres"
+    db_name: "mydatabase"
+    db_password: "{{ postgresql.db_password }}"  # Из secrets.yml
+    
+    # Redis
+    redis_password: 'your_redis_password'
+
+  handlers:
+    - name: Restart PostgreSQL
+      systemd:
+        name: postgresql
+        state: restarted
+      become: true
+
+    - name: Restart Redis
+      systemd:
+        name: redis-server
+        state: restarted
+      become: true
+
+    - name: Restart Gunicorn
+      systemd:
+        name: gunicorn
+        state: restarted
+      become: true
+
+    - name: Restart Daphne
+      systemd:
+        name: daphne
+        state: restarted
+      become: true
+
+    - name: Restart Nginx
+      systemd:
+        name: nginx
+        state: restarted
+      become: true
+
+    - name: Restart Celery
+      systemd:
+        name: celery
+        state: restarted
+      become: true
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+      become: true
+
+    - name: Install system packages
+      apt:
+        name:
+          - python3.12
+          - python3-pip
+          - python3-venv
+          - nginx
+          - postgresql-14
+          - postgresql-contrib-14
+          - redis-server
+          - git
+          - build-essential
+          - libpq-dev
+          - python3-dev
+          - curl
+        state: present
+      become: true
+
+    - name: Configure PostgreSQL authentication
+      lineinfile:
+        path: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+        regexp: '^local\s+all\s+postgres\s+peer'
+        line: 'local all postgres md5'
+        backup: yes
+      become: true
+      notify: Restart PostgreSQL
+
+    - name: Ensure PostgreSQL is restarted
+      meta: flush_handlers
+
+    - name: Create PostgreSQL database
+      postgresql_db:
+        name: "{{ db_name }}"
+        encoding: 'UTF-8'
+        lc_collate: 'en_US.UTF-8'
+        lc_ctype: 'en_US.UTF-8'
+        login_host: "localhost"
+        login_user: "{{ db_user }}"
+        login_password: "{{ db_password }}"
+        port: 5432
+      become: true
+
+    - name: Configure Redis password
+      lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^# requirepass foobared'
+        line: 'requirepass {{ redis_password }}'
+      become: true
+      notify: Restart Redis
+
+    - name: Install Poetry
+      shell: |
+        curl -sSL https://install.python-poetry.org | python3 -
+        /root/.local/bin/poetry --version
+      args:
+        executable: /bin/bash
+      become: true
+      register: poetry_install
+      changed_when: "'Poetry' in poetry_install.stdout"
+
+    - name: Create project directory
+      file:
+        path: "{{ project_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: true
+
+    - name: Clone repository
+      git:
+        repo: "{{ git_repo }}"
+        dest: "{{ project_path }}"
+        version: "{{ git_branch }}"
+        force: yes
+      become: true
+
+    - name: Create .env file
+      template:
+        src: "{{ playbook_dir }}/.env.j2"
+        dest: "{{ project_path }}/.env"
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+
+    - name: Set up Python virtual environment
+      command: /root/.local/bin/poetry env use python3.12
+      args:
+        chdir: "{{ project_path }}"
+      become: true
+
+    - name: Install Python dependencies
+      command: /root/.local/bin/poetry install --no-dev
+      args:
+        chdir: "{{ project_path }}"
+      become: true
+
+    - name: Collect static files
+      command: /root/.local/bin/poetry run python manage.py collectstatic --noinput
+      args:
+        chdir: "{{ project_path }}"
+      become: true
+
+    - name: Apply database migrations
+      command: /root/.local/bin/poetry run python manage.py migrate --noinput
+      args:
+        chdir: "{{ project_path }}"
+      become: true
+
+    - name: Set up Gunicorn service
+      template:
+        src: "{{ playbook_dir }}/gunicorn.service.j2"
+        dest: /etc/systemd/system/gunicorn.service
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      notify: Restart Gunicorn
+
+    - name: Set up Daphne service
+      template:
+        src: "{{ playbook_dir }}/daphne.service.j2"
+        dest: /etc/systemd/system/daphne.service
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      notify: Restart Daphne
+
+    - name: Set up Nginx configuration
+      template:
+        src: "{{ playbook_dir }}/nginx.conf.j2"
+        dest: /etc/nginx/sites-available/{{ project_name }}
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      notify: Restart Nginx
+
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/{{ project_name }}
+        dest: /etc/nginx/sites-enabled/{{ project_name }}
+        state: link
+      become: true
+      notify: Restart Nginx
+
+    - name: Set up Celery service
+      template:
+        src: "{{ playbook_dir }}/celery.service.j2"
+        dest: /etc/systemd/system/celery.service
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      notify: Restart Celery

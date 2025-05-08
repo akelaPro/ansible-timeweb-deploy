@@ -2,9 +2,5 @@
 5.129.200.127 ansible_user=root
 
 [timeweb:vars]
-ansible_python_interpreter=/usr/bin/python3 
+ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_private_key_file=~/.ssh/id_ed25519
-
-
-[defaults]
-remote_tmp = /tmp

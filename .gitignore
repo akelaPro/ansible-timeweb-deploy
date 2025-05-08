@@ -1,0 +1,4 @@
+.vault_pass.txt
+secrets.yml
+.env.j2 
+
